@@ -1,0 +1,15 @@
+name: cpeb4
+dependencies:
+  - python=3.8
+  - jinja2
+  - notebook
+  - numpy
+  - pandas
+  - scipy
+  - pip
+  - conda-forge::openmm==7.5
+  - conda-forge::mdtraj
+  - pip:
+    - matplotlib
+    - mdanalysis
+    - ovito
