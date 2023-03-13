@@ -6,10 +6,10 @@ dependencies:
   - numpy
   - pandas
   - scipy
-  - pip
-  - conda-forge::openmm==7.5
+  - matplotlib
+  - conda-forge::openmm==7.5.1
   - conda-forge::mdtraj
+  - pip
   - pip:
-    - matplotlib
     - mdanalysis
     - ovito
