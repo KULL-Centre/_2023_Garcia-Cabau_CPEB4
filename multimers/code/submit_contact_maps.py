@@ -19,7 +19,7 @@ conda activate cpeb4
 
 cd $PBS_O_WORKDIR
 
-python ./ene_m.py --dirname {{dirname}} --ionic {{ionic}} --temp {{temp}} --size {{size}}""")
+python ./contact_maps.py --dirname {{dirname}} --ionic {{ionic}} --temp {{temp}} --size {{size}}""")
 
 cutoff = 2.0
 
