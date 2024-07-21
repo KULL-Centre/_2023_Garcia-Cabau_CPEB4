@@ -6,20 +6,25 @@ import time
 import os
 import sys
 from argparse import ArgumentParser
+import random
 
 parser = ArgumentParser()
 parser.add_argument('--name',nargs='?',const='', type=str)
-parser.add_argument('--temp',nargs='?',const='', type=int)
-parser.add_argument('--cutoff',nargs='?',const='', type=float)
+parser.add_argument('--replica',nargs='?',const='', type=int)
 args = parser.parse_args()
 
-def simulate(residues,name,prot,temp,cutoff):
+def simulate(residues,name,replica,prot):
+    path = name+f'/{replica:d}'
+    temp = 293
+
     residues = residues.set_index('one')
 
     lj_eps, fasta, types, MWs = genParamsLJ(residues,name,prot)
-    yukawa_eps, yukawa_kappa = genParamsDH(residues,name,prot,temp)
+    yukawa_eps, yukawa_kappa, residues = genParamsDH(residues,name,prot,temp)
 
     N = len(fasta)
+
+    print('H charge',residues.loc['H','q'])
 
     # set parameters
     L = 15.
@@ -64,7 +69,7 @@ def simulate(residues,name,prot,temp,cutoff):
 
     n_chains = xy.shape[0]
 
-    pdb_file = name+'/{:d}/top.pdb'.format(temp)
+    pdb_file = path+'/top.pdb'
 
     if os.path.isfile(pdb_file):
         pdb = app.pdbfile.PDBFile(pdb_file)
@@ -90,19 +95,14 @@ def simulate(residues,name,prot,temp,cutoff):
 
     hb = openmm.openmm.HarmonicBondForce()
 
-    energy_expression = 'select(step(r-2^(1/6)*s),4*eps*l*((s/r)^12-(s/r)^6-shift),4*eps*((s/r)^12-(s/r)^6-l*shift)+eps*(1-l))'
-    ah = openmm.openmm.CustomNonbondedForce(energy_expression+'; s=0.5*(s1+s2); l=0.5*(l1+l2); shift=(0.5*(s1+s2)/rc)^12-(0.5*(s1+s2)/rc)^6')
+    energy_expression = f'{lj_eps}*select(step(r-2^(1/6)*s),4*l*((s/r)^12-(s/r)^6-shift),4*((s/r)^12-(s/r)^6-l*shift)+(1-l))'
+    ah = openmm.openmm.CustomNonbondedForce(energy_expression+f'; s=0.5*(s1+s2); l=0.5*(l1+l2); shift=(0.5*(s1+s2)/2.0)^12-(0.5*(s1+s2)/2.0)^6')
 
-    ah.addGlobalParameter('eps',lj_eps*unit.kilojoules_per_mole)
-    ah.addGlobalParameter('rc',cutoff*unit.nanometer)
     ah.addPerParticleParameter('s')
     ah.addPerParticleParameter('l')
 
-    print('rc',cutoff*unit.nanometer)
-
-    yu = openmm.openmm.CustomNonbondedForce('q*(exp(-kappa*r)/r-shift); q=q1*q2')
-    yu.addGlobalParameter('kappa',yukawa_kappa/unit.nanometer)
-    yu.addGlobalParameter('shift',np.exp(-yukawa_kappa*4.0)/4.0/unit.nanometer)
+    shift = np.exp(-yukawa_kappa*4.0)/4.0
+    yu = openmm.openmm.CustomNonbondedForce(f'q*(exp(-{yukawa_kappa}*r)/r-{shift}); q=q1*q2')
     yu.addPerParticleParameter('q')
 
     for j in range(n_chains):
@@ -123,8 +123,8 @@ def simulate(residues,name,prot,temp,cutoff):
     yu.setNonbondedMethod(openmm.openmm.CustomNonbondedForce.CutoffPeriodic)
     ah.setNonbondedMethod(openmm.openmm.CustomNonbondedForce.CutoffPeriodic)
     hb.setUsesPeriodicBoundaryConditions(True)
-    yu.setCutoffDistance(4*unit.nanometer)
-    ah.setCutoffDistance(cutoff*unit.nanometer)
+    yu.setCutoffDistance(4.0*unit.nanometer)
+    ah.setCutoffDistance(2.0*unit.nanometer)
 
     system.addForce(hb)
     system.addForce(yu)
@@ -142,30 +142,33 @@ def simulate(residues,name,prot,temp,cutoff):
 
     simulation = app.simulation.Simulation(pdb.topology, system, integrator, platform, dict(CudaPrecision='mixed'))
 
-    check_point = name+'/{:d}/restart.chk'.format(temp)
+    check_point = path+'/restart.chk'
+    dcd_file = path+f'/{name:s}.dcd'
 
-    if os.path.isfile(check_point):
-        print('Reading check point file')
+    if os.path.isfile(check_point) and os.path.isfile(dcd_file):
         simulation.loadCheckpoint(check_point)
-        simulation.reporters.append(app.dcdreporter.DCDReporter(name+'/{:d}/{:s}.dcd'.format(temp,name),int(5e5),append=True))
+        simulation.reporters.append(app.dcdreporter.DCDReporter(dcd_file,int(2e5),append=True))
+    elif os.path.isfile(dcd_file):
+        simulation.context.setPositions(pdb.positions)
+        simulation.reporters.append(app.dcdreporter.DCDReporter(dcd_file,int(2e5),append=True))
     else:
         simulation.context.setPositions(pdb.positions)
         simulation.minimizeEnergy()
-        simulation.reporters.append(app.dcdreporter.DCDReporter(name+'/{:d}/{:s}.dcd'.format(temp,name),int(5e5)))
+        simulation.reporters.append(app.dcdreporter.DCDReporter(dcd_file,int(2e5)))
 
-    simulation.reporters.append(app.statedatareporter.StateDataReporter('{:s}_{:d}.log'.format(name,temp),1000000,
-             step=True,speed=True,elapsedTime=True,separator='\t'))
+    simulation.reporters.append(app.statedatareporter.StateDataReporter(f'{name:s}_{replica:d}.log',int(2e5),
+             progress=True,speed=True,elapsedTime=True,totalSteps=int(5e8),separator='\t'))
 
-    simulation.runForClockTime(48*unit.hour, checkpointFile=check_point, checkpointInterval=2*unit.hour)
+    simulation.step(int(4e8))
 
     simulation.saveCheckpoint(check_point)
 
-    center_slab(name,temp)
+    center_slab(name,replica)
 
 residues = pd.read_csv('residues.csv').set_index('three',drop=False)
 proteins = pd.read_csv('proteins.csv',index_col=0)
 proteins.fasta = proteins.fasta.apply(list)
-print(args.name,args.temp)
+print(args.name,args.replica)
 t0 = time.time()
-simulate(residues,args.name,proteins.loc[args.name],args.temp,args.cutoff)
+simulate(residues,args.name,args.replica,proteins.loc[args.name])
 print('Timing {:.3f}'.format(time.time()-t0))

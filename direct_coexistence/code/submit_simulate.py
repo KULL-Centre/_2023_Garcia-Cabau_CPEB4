@@ -1,41 +1,33 @@
 from analyse import *
 import os
 import subprocess
+import shutil
 from jinja2 import Template
 
 proteins = initProteins()
 proteins.to_csv('proteins.csv')
 
 submission = Template("""#!/bin/bash
-#PBS -W group_list=ku_10001 -A ku_10001
-#PBS -N {{name}}
-### Only send mail when job is aborted or terminates abnormally
-#PBS -m n
-### Number of nodes
-#PBS -l nodes=1:ppn=2:gpus=1
-### Memory
-#PBS -e {{name}}
-#PBS -o {{name}}
-#PBS -l mem=10gb
-#PBS -l walltime=50:00:00
+#SBATCH --job-name={{name}}_{{replica}}
+#SBATCH --nodes=1
+#SBATCH --partition=qgpu
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=18
+#SBATCH -t 48:00:00
+#SBATCH --mem=10GB
+#SBATCH -o {{name}}/{{replica}}/out
+#SBATCH -e {{name}}/{{replica}}/err
 
-source /home/people/giutes/.bashrc
-conda activate cpeb4
-module purge
-module load cuda/toolkit/10.1/10.1.168 openmpi/gcc/64/4.0.2
+source /home/gitesei/.bashrc
+module load gcc/11.2.0 openmpi/4.0.3 cuda/11.2.0
+conda activate hyres
 
-cd $PBS_O_WORKDIR
+python ./simulate.py --name {{name}} --replica {{replica}}""")
 
-python ./simulate.py --name {{name}} --temp {{temp}} --cutoff {{cutoff}}""")
-
-cutoff = 2.0
-
-for name,prot in proteins.loc[['CPEB4','CPEB4pH6','CPEB4pH7','CPEB4H50S','CPEB4H50S_Clust','CPEB4H25S','CPEB4H25S_Clust']].iterrows():
+for name,prot in proteins.loc[['CPEB4H50S_Clust','CPEB4H25S_Clust','CPEB4H50S','CPEB4H25S','CPEB4','CPEB4pH6','CPEB4pH7',]].iterrows():
     if not os.path.isdir(name):
         os.mkdir(name)
-    for temp in [293]:
-        if not os.path.isdir(f'{name:s}/{temp:d}'):
-            os.mkdir(f'{name:s}/{temp:d}')
-        with open(f'{name:s}_{temp:d}.sh', 'w') as submit:
-            submit.write(submission.render(name=name,temp='{:d}'.format(temp),cutoff='{:.1f}'.format(cutoff)))
-        subprocess.run(['qsub',f'{name:s}_{temp:d}.sh'])
+    for replica in [0,2,3]:
+        with open(f'{name:s}_{replica:d}.sh', 'w') as submit:
+            submit.write(submission.render(name=name,replica=f'{replica:d}'))
+        subprocess.run(['sbatch',f'{name:s}_{replica:d}.sh'])

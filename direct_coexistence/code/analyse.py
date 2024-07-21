@@ -85,7 +85,7 @@ def genParamsDH(df,name,prot,temp):
     yukawa_eps = [r.loc[a].q*np.sqrt(lB*kT) for a in fasta]
     # Calculate the inverse of the Debye length
     yukawa_kappa = np.sqrt(8*np.pi*lB*prot.ionic*6.022/10)
-    return yukawa_eps, yukawa_kappa
+    return yukawa_eps, yukawa_kappa, r
 
 def calc_zpatch(z,h):
     cutoff = 0
@@ -112,13 +112,13 @@ def calc_zpatch(z,h):
     hpatch = np.array(hpatch)
     return zpatch, hpatch
 
-def center_slab(name,temp,start=None,end=None,step=1,input_pdb='top.pdb'):
-    path = f'{name}/{temp}'
-    u = MDAnalysis.Universe(f'{path}/{input_pdb}',path+f'/{name}.dcd',in_memory=True)
+def center_slab(name,replica,start=None,end=None,step=1,input_pdb='top.pdb'):
+    path = f'{name:s}/{replica:d}'
+    u = MDAnalysis.Universe(f'{path:s}/{input_pdb:s}',f'{path:s}/{name:s}.dcd',in_memory=True)
     n_frames = len(u.trajectory[start:end:step])
     ag = u.atoms
     n_atoms = ag.n_atoms
-
+    print(name,replica)
     L = u.dimensions[0]/10
     lz = u.dimensions[2]
     edges = np.arange(0,lz+1,1)
@@ -126,7 +126,7 @@ def center_slab(name,temp,start=None,end=None,step=1,input_pdb='top.pdb'):
     z = edges[:-1] + dz
     n_bins = len(z)
     hs = np.zeros((n_frames,n_bins))
-    with MDAnalysis.Writer(path+'/traj.dcd',n_atoms) as W:
+    with MDAnalysis.Writer(f'{path:s}/traj.dcd',n_atoms) as W:
         for t,ts in enumerate(u.trajectory[start:end:step]):
             # shift max density to center
             zpos = ag.positions.T[2]
@@ -144,5 +144,90 @@ def center_slab(name,temp,start=None,end=None,step=1,input_pdb='top.pdb'):
             h, e = np.histogram(zpos,bins=edges)
             hs[t] = h
             W.write(ag)
-    np.save(f'{name:s}_{temp:d}.npy',hs,allow_pickle=False)
+    np.save(f'{name:s}_{replica:d}.npy',hs,allow_pickle=False)
     return hs, z
+
+def genDCD(name,replica,start=None,end=None,step=1,input_pdb='top.pdb'):
+    path = f'{name:s}/{replica:d}'
+    t = md.load(f'{path:s}/{name:s}.dcd',top=f'{path:s}/{input_pdb:s}')
+    t.xyz *= 10
+    t.unitcell_lengths *= 10
+    lz = t.unitcell_lengths[0,2]
+    edges = np.arange(-lz/2.,lz/2.,1)
+    dz = (edges[1]-edges[0])/2.
+    z = edges[:-1]+dz
+    h = np.apply_along_axis(lambda a: np.histogram(a,bins=edges)[0], 1, t.xyz[:,:,2])
+    zmid = np.apply_along_axis(lambda a: z[a.argmax()], 1, h)
+    indices = np.argmin(np.abs(t.xyz[:,:,2]-zmid[:,np.newaxis]),axis=1)
+    t.save_dcd(path+'/traj4.dcd')
+
+    u = MDAnalysis.Universe(path+'/top.pdb',path+'/traj4.dcd')
+    ag = u.atoms
+    with MDAnalysis.Writer(path+'/traj3.dcd', ag.n_atoms) as W:
+        for ts,ndx in zip(u.trajectory,indices):
+            ts = transformations.unwrap(ag)(ts)
+            ts = transformations.center_in_box(
+                u.select_atoms('index {:d}'.format(ndx)), center='geometry')(ts)
+            ts = transformations.wrap(ag)(ts)
+            W.write(ag)
+
+    t = md.load(path+'/traj3.dcd',top=path+'/top.pdb')
+    edges = np.arange(0,lz,1)
+    dz = (edges[1]-edges[0])/2.
+    z = edges[:-1]+dz
+    h = np.apply_along_axis(lambda a: np.histogram(a,bins=edges)[0], 1, t.xyz[:,:,2])
+    h = np.mean(h[:120],axis=0)
+    maxoverlap = np.apply_along_axis(lambda a: np.correlate(h,np.histogram(a,
+                bins=edges)[0], 'full').argmax()-h.size+dz, 1, t.xyz[:,:,2])
+
+    u = MDAnalysis.Universe(path+'/top.pdb',path+'/traj3.dcd')
+    ag = u.atoms
+    with MDAnalysis.Writer(path+'/traj2.dcd', ag.n_atoms) as W:
+        for ts,mo in zip(u.trajectory,maxoverlap):
+            ts = transformations.unwrap(ag)(ts)
+            ts = transformations.translate([0,0,mo*10])(ts)
+            ts = transformations.wrap(ag)(ts)
+            W.write(ag)
+
+    t = md.load(path+'/traj2.dcd',top=path+'/top.pdb')
+    h = np.apply_along_axis(lambda a: np.histogram(a,bins=edges)[0], 1, t.xyz[:,:,2])
+    zmid = np.apply_along_axis(lambda a: z[a>np.quantile(a,.98)].mean(), 1, h)
+    indices = np.argmin(np.abs(t.xyz[:,:,2]-zmid[:,np.newaxis]),axis=1)
+
+    u = MDAnalysis.Universe(path+'/top.pdb',path+'/traj2.dcd')
+    ag = u.atoms
+    with MDAnalysis.Writer(path+'/traj1.dcd', ag.n_atoms) as W:
+        for ts,ndx in zip(u.trajectory,indices):
+            ts = transformations.unwrap(ag)(ts)
+            ts = transformations.center_in_box(
+                u.select_atoms('index {:d}'.format(ndx)), center='geometry')(ts)
+            ts = transformations.wrap(ag)(ts)
+            W.write(ag)
+
+    t = md.load(path+'/traj1.dcd',top=path+'/top.pdb')
+    h = np.apply_along_axis(lambda a: np.histogram(a,bins=edges)[0], 1, t.xyz[:,:,2])
+    h = np.mean(h[120:],axis=0)
+    maxoverlap = np.apply_along_axis(lambda a: np.correlate(h,np.histogram(a,
+                bins=edges)[0], 'full').argmax()-h.size+dz, 1, t.xyz[:,:,2])
+
+    u = MDAnalysis.Universe(path+'/top.pdb',path+'/traj1.dcd')
+    ag = u.atoms
+    with MDAnalysis.Writer(path+'/traj0.dcd', ag.n_atoms) as W:
+        for ts,mo in zip(u.trajectory,maxoverlap):
+            ts = transformations.unwrap(ag)(ts)
+            ts = transformations.translate([0,0,mo*10])(ts)
+            ts = transformations.wrap(ag)(ts)
+            W.write(ag)
+
+    t = md.load(path+'/traj0.dcd',top=path+'/top.pdb')
+
+    h = np.apply_along_axis(lambda a: np.histogram(a,bins=edges)[0], 1, t.xyz[:,:,2])
+    np.save(f'{name:s}_{replica:d}.npy',h,allow_pickle=False)
+    os.remove(path+'/traj1.dcd')
+    os.remove(path+'/traj2.dcd')
+    os.remove(path+'/traj3.dcd')
+    os.remove(path+'/traj4.dcd')
+    t.xyz /= 10
+    t.unitcell_lengths /= 10
+    t[0].save_pdb(path+'/top.pdb')
+    t.save_dcd(path+'/traj0.dcd')

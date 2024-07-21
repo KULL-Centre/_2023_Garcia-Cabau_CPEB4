@@ -16,7 +16,8 @@ import time
 
 parser = ArgumentParser()
 parser.add_argument('--name',nargs='?',const='', type=str)
-parser.add_argument('--temp',nargs='?',const='', type=int)
+parser.add_argument('--temp',nargs='?',const='', type=float)
+parser.add_argument('--replica',nargs='?',const='', type=int)
 parser.add_argument('--chunk',nargs='?',const='', type=int)
 args = parser.parse_args()
 
@@ -28,16 +29,12 @@ HASP = lambda r,s,l,rc : np.where(r<rc, HA(r,s,l)-HA(rc,s,l), 0)
 DH = lambda r,yukawa_eps,lD : yukawa_eps*np.exp(-r/lD)/r
 DHSP = lambda r,yukawa_eps,lD,rc : np.where(r<rc, DH(r,yukawa_eps,lD)-DH(rc,yukawa_eps,lD), 0)
 
-def calc_energies(t, chain_index_1, chain_index_2, sigmas, lambdas, yukawa_eps, lD, Naa):
+def calc_energies(t,chain_index_1,chain_index_2,sigmas,lambdas,yukawa_eps,lD,temp,Naa):
     sel1 = t.top.select('chainid {:d}'.format(chain_index_1))
     sel2 = t.top.select('chainid {:d}'.format(chain_index_2))
     pairs_indices = t.top.select_pairs(sel1,sel2)
     d = md.compute_distances(t,pairs_indices).reshape(t.n_frames,Naa,Naa)
-    ah_ene = HASP(d,sigmas,lambdas,2.0)
-    dh_ene = DHSP(d,yukawa_eps,lD,4.0)
-    switch_2 = (.5-.5*np.tanh((d-sigmas)/.2))
-    switch_3 = (.5-.5*np.tanh((d-sigmas)/.3))
-    return ah_ene, dh_ene, switch_2, switch_3
+    return .5-.5*np.tanh((d-1.)/.3)
 
 def calc_cm_rg(t,masses):
     chain_cm = (np.sum(t.xyz*masses[np.newaxis,:,np.newaxis],axis=1)/masses.sum()).astype(np.float16)
@@ -46,16 +43,16 @@ def calc_cm_rg(t,masses):
     chain_ete = md.compute_distances(t, [[0,t.n_atoms-1]]).flatten()
     return chain_cm, chain_rg, chain_ete
 
-def calcWidth(path,name,temp):
+def calcWidth(path,name,replica):
     # this function finds the z-positions that delimit the slab and the dilute phase
-    h = np.load('{:s}_{:d}.npy'.format(name,temp),allow_pickle=False)
+    h = np.load('{:s}_{:d}.npy'.format(name,replica),allow_pickle=False)
     lz = (h.shape[1]+1)
     edges = np.arange(-lz/2.,lz/2.,1)/10
     dz = (edges[1]-edges[0])/2.
     z = edges[:-1]+dz
     profile = lambda x,a,b,c,d : .5*(a+b)+.5*(b-a)*np.tanh((np.abs(x)-c)/d)
     residuals = lambda params,*args : ( args[1] - profile(args[0], *params) )
-    hm = np.mean(h[100:],axis=0)
+    hm = np.mean(h[1000:],axis=0)
     z1 = z[z>0]
     h1 = hm[z>0]
     z2 = z[z<0]
@@ -67,10 +64,10 @@ def calcWidth(path,name,temp):
     cutoff2 = .5*(np.abs(res1.x[2]+6*res1.x[3])+np.abs(-res2.x[2]-6*res2.x[3]))
     return cutoff1, cutoff2, z, edges
 
-def analyse_traj(df,proteins,name,temp,chunk):
+def analyse_traj(df,proteins,name,temp,replica,chunk):
     # this function finds the index of the chain at the center of the slab for each frame
-    path = '{:s}/{:d}/'.format(name,temp)
-    cutoff1, cutoff2, z, edges = calcWidth(path,name,temp)
+    path = '{:s}/{:d}/'.format(name,replica)
+    cutoff1, cutoff2, z, edges = calcWidth(path,name,replica)
     print(name,cutoff1,cutoff2)
     prot = proteins.loc[name]
     Naa = len(prot.fasta)
@@ -100,10 +97,14 @@ def analyse_traj(df,proteins,name,temp,chunk):
     t.xyz -= t.unitcell_lengths[0,:]/2
 
     t.make_molecules_whole(inplace=True)
-    t = t[200:] # skip first 1 us
-    t = t[t.n_frames%10:]
-    begin = int(t.n_frames/10 * chunk)
-    end = int(t.n_frames/10 * (chunk + 1) - 1)
+    n_chunks = 20
+    t = t[1000:] # skip first 2 us
+    t = t[t.n_frames%n_chunks:]
+    begin = int(t.n_frames/n_chunks * chunk)
+    end = int(t.n_frames/n_chunks * (chunk + 1) - 1)
+    print('x',t.xyz[:,:,0].min(),t.xyz[:,:,0].max())
+    print('y',t.xyz[:,:,1].min(),t.xyz[:,:,1].max())
+    print('z',t.xyz[:,:,2].min(),t.xyz[:,:,2].max())
 
     print(begin,end)
 
@@ -149,82 +150,22 @@ def analyse_traj(df,proteins,name,temp,chunk):
     yukawa_eps = qq*lB*RT
     lD = 1. / np.sqrt(8*np.pi*lB*prot.ionic*6.022/10)
 
-    top_snap = md.Topology()
-    for _ in range(2):
-        chain = top_snap.add_chain()
-        for i,resname in enumerate(prot.fasta):
-            if i>=71 and i<147:
-                residue = top_snap.add_residue(df.loc['E','three'], chain)
-                top_snap.add_atom(df.loc['E','three'],
-                             element=md.element.carbon, residue=residue)
-            elif i>=228 and i<252:
-                residue = top_snap.add_residue(df.loc['H','three'], chain)
-                top_snap.add_atom(df.loc['H','three'],
-                             element=md.element.carbon, residue=residue)
-            elif i>=402 and i<410:
-                residue = top_snap.add_residue(df.loc['R','three'], chain)
-                top_snap.add_atom(df.loc['R','three'],
-                             element=md.element.carbon, residue=residue)
-            else:
-                residue = top_snap.add_residue(df.loc['A','three'], chain)
-                top_snap.add_atom(df.loc['A','three'],
-                             element=md.element.carbon, residue=residue)
-        for i in range(chain.n_atoms-1):
-            top_snap.add_bond(chain.atom(i),chain.atom(i+1))
-
-    ah_mat = np.zeros((t.n_frames,Naa,Naa))
-    dh_mat = np.zeros((t.n_frames,Naa,Naa))
-    s2_mat = np.zeros((t.n_frames,Naa,Naa))
-    s3_mat = np.zeros((t.n_frames,Naa,Naa))
-
-    xyz = np.empty(0)
+    contact_map = np.zeros((t.n_frames,Naa,Naa))
 
     for chain_1 in np.unique(middle_chain):
         print(chain_1)
         for chain_2 in np.setdiff1d(np.arange(n_chains),[chain_1]):
             ndx = ((middle_chain==chain_1)*indices[chain_2]).astype(bool)
             if np.any(ndx):
-                ah_ene, dh_ene, s_2, s_3 = calc_energies(t[ndx],chain_1,chain_2,sigmas,lambdas,yukawa_eps,lD,Naa)
-                ah_mat[ndx,:] += ah_ene
-                dh_mat[ndx,:] += dh_ene
-                s2_mat[ndx,:] += s_2
-                s3_mat[ndx,:] += s_3
-
-                # collect snapshots showing contacts between 72-147, HClust, and me4
-                threshold = s_3.max()*.5
-                if threshold > 0.2:
-                    if name == 'CPEB4':
-                        ndx_contact_1 = np.unique(np.where(s_3[:,228:252,402:410]>threshold)[0])
-                        ndx_contact_2 = np.unique(np.where(s_3[:,402:410,228:252]>threshold)[0])
-                    if name == 'CPEB4pH6' or name == 'CPEB4pH7':
-                        ndx_contact_1 = np.unique(np.where(s_3[:,71:147,228:252]>threshold)[0])
-                        ndx_contact_2 = np.unique(np.where(s_3[:,228:252,71:147]>threshold)[0])
-                    ndx_contact = np.unique(np.concatenate([ndx_contact_1,ndx_contact_2]))
-                    if ndx_contact.size > 0:
-                        sel_chains = t.top.select(''.join(['chainid {:d} '.format(i) for i in [chain_1,chain_2]]))
-                        xyz = np.append(xyz, t[ndx].atom_slice(sel_chains).slice(ndx_contact).xyz)
-
-    # save snapshots
-    xyz = np.array(xyz).reshape(-1,top_snap.n_atoms,3)
-    n_frames = xyz.shape[0]
-    t_snap = md.Trajectory(xyz, top_snap, time=np.arange(0,n_frames,1),
-         unitcell_lengths=[[25,25,300]]*n_frames,
-         unitcell_angles=[[90,90,90]]*n_frames)
-    t_snap = t_snap.image_molecules(inplace=False, anchor_molecules=[set(t.top.residue(i).atoms) for i in range(1)], make_whole=True)
-    t_snap.save(f'snapshots/{name:s}_{temp:d}_{chunk:d}.xtc')
-    t_snap[0].save(f'snapshots/{name:s}_{temp:d}_{chunk:d}.pdb')
-
+                switch = calc_energies(t[ndx],chain_1,chain_2,sigmas,lambdas,yukawa_eps,lD,temp,Naa)
+                contact_map[ndx,:] += switch
     # save energy and contact maps
-    np.save(f's_mat/{name:s}_{temp:d}_{chunk:d}_ah_mat.npy',ah_mat.mean(axis=0))
-    np.save(f's_mat/{name:s}_{temp:d}_{chunk:d}_dh_mat.npy',dh_mat.mean(axis=0))
-    np.save(f's_mat/{name:s}_{temp:d}_{chunk:d}_s2_mat.npy',s2_mat.mean(axis=0))
-    np.save(f's_mat/{name:s}_{temp:d}_{chunk:d}_s3_mat.npy',s3_mat.mean(axis=0))
+    np.save(f'contact_maps/{name:s}_{replica:d}_{chunk:d}_contact_map.npy',contact_map.mean(axis=0))
 
 df = pd.read_csv('residues.csv').set_index('three',drop=False).set_index('one')
 proteins = pd.read_csv('proteins.csv',index_col=0)
 proteins.fasta = proteins.fasta.apply(list)
 
 t0 = time.time()
-
-analyse_traj(df,proteins,args.name,args.temp,args.chunk)
+analyse_traj(df,proteins,args.name,args.temp,args.replica,args.chunk)
 print('Timing {:.3f}'.format(time.time()-t0))
