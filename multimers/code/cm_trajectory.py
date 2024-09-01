@@ -1,12 +1,9 @@
 import numpy as np
 import mdtraj as md
 import pandas as pd
-from itertools import combinations, product
 from mdtraj import element
 from argparse import ArgumentParser
 import logging
-import itertools
-import os
 import time
 import string
 import gc
@@ -45,7 +42,6 @@ def traj_cm_rg(df_residues,dirname,df_proteins,composition,temp,ionic):
         masses[0] += 2
         masses[-1] += 16
         radii = df_residues.loc[prot.fasta,'sigmas'].values/2
-        Naa = len(prot.fasta)
         n_chains = composition.loc[name].N
         for _ in range(n_chains):
             all_masses.append(masses)

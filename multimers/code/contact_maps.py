@@ -1,14 +1,8 @@
 import numpy as np
 import mdtraj as md
 import pandas as pd
-from itertools import combinations, product
-from mdtraj import element
 from argparse import ArgumentParser
 import itertools
-import os
-import time
-import string
-from scipy.optimize import least_squares
 
 parser = ArgumentParser()
 parser.add_argument('--dirname',nargs='?',const='',type=str,required=True)
@@ -32,9 +26,8 @@ def calc_energies(t, chain_index_1, chain_index_2, sigmas, lambdas, yukawa_eps, 
     d = md.compute_distances(t,pairs_indices).reshape(Naa,Naa)
     ah_ene = HASP(d,sigmas,lambdas,2.0)
     dh_ene = DHSP(d,yukawa_eps,lD,4.0)
-    switch_2 = (.5-.5*np.tanh((d-sigmas)/.2))
-    switch_3 = (.5-.5*np.tanh((d-sigmas)/.3))
-    return ah_ene, dh_ene, switch_2, switch_3
+    switch = (.5-.5*np.tanh((d-1.)/.3))
+    return ah_ene, dh_ene, switch
 
 def max_clust_dist(df_residues,dirname,df_proteins,temp,ionic,size):
     path = '{:s}/{:d}/{:d}'.format(dirname,temp,ionic)
@@ -42,8 +35,6 @@ def max_clust_dist(df_residues,dirname,df_proteins,temp,ionic,size):
     s_aa = md.load(path+'/top.pdb')
 
     Lx = s_aa.unitcell_lengths[0,0]
-    Ly = s_aa.unitcell_lengths[0,1]
-    Lz = s_aa.unitcell_lengths[0,2]
 
     prot = df_proteins.loc[dirname]
     Naa = len(prot.fasta)
@@ -55,8 +46,6 @@ def max_clust_dist(df_residues,dirname,df_proteins,temp,ionic,size):
     cluster = pd.read_pickle('cmtraj/clusters_{:s}_{:d}.pkl'.format(dirname,ionic))
 
     edges = np.arange(0,Lx/2,.1)
-
-    x = edges[:-1]+(edges[1]-edges[0])/2.
 
     pdb = md.load_pdb('cmtraj/{:s}_400_{:d}_{:d}.pdb'.format(dirname,temp,ionic))
 
@@ -85,8 +74,7 @@ def max_clust_dist(df_residues,dirname,df_proteins,temp,ionic,size):
 
     ah_ene_mat = np.zeros((Naa,Naa))
     dh_ene_mat = np.zeros((Naa,Naa))
-    s_2_mat = np.zeros((Naa,Naa))
-    s_3_mat = np.zeros((Naa,Naa))
+    s_mat = np.zeros((Naa,Naa))
 
     rgs = []
     kappas = []
@@ -114,8 +102,6 @@ def max_clust_dist(df_residues,dirname,df_proteins,temp,ionic,size):
 
                 t_w = t.image_molecules(inplace=False, anchor_molecules=[set(t.top.residue(i).atoms) for i in unique], make_whole=True)
 
-                dist_cm_ndx = np.linalg.norm(t_w.xyz[0]-md.compute_center_of_geometry(t_w),axis=1).argsort()
-
                 vec = vec - t_w.xyz
 
                 sel_aa = s_aa.top.select(''.join(['chainid {:d} '.format(i) for i in indices_dict[frame]]))
@@ -141,17 +127,13 @@ def max_clust_dist(df_residues,dirname,df_proteins,temp,ionic,size):
 
                 counter_mat += 1.
                 for index_2 in np.setdiff1d(np.arange(t.n_chains),[index_1]):
-                    ah_ene, dh_ene, s_2, s_3 = calc_energies(t[0],index_1,index_2,sigmas,lambdas,yukawa_eps,lD,Naa)
+                    ah_ene, dh_ene, switch = calc_energies(t[0],index_1,index_2,sigmas,lambdas,yukawa_eps,lD,Naa)
                     ah_ene_mat += ah_ene
                     dh_ene_mat += dh_ene
-                    s_2_mat += s_2
-                    s_3_mat += s_3
+                    s_mat += switch
     if counter_mat > 0:
         np.savetxt('ene_mat/{:s}_size_rg_kappa_{:d}_{:d}_{:d}.dat'.format(dirname,temp,ionic,size),np.c_[number_of_chains,rgs,kappas])
-        np.save('ene_mat/{:s}_ah_{:d}_{:d}_{:d}.npy'.format(dirname,temp,ionic,size),ah_ene_mat/counter_mat)
-        np.save('ene_mat/{:s}_dh_{:d}_{:d}_{:d}.npy'.format(dirname,temp,ionic,size),dh_ene_mat/counter_mat)
-        np.save('ene_mat/{:s}_s2_{:d}_{:d}_{:d}.npy'.format(dirname,temp,ionic,size),s_2_mat/counter_mat)
-        np.save('ene_mat/{:s}_s3_{:d}_{:d}_{:d}.npy'.format(dirname,temp,ionic,size),s_3_mat/counter_mat)
+        np.save('ene_mat/{:s}_contacts_{:d}_{:d}_{:d}.npy'.format(dirname,temp,ionic,size),s_mat/counter_mat)
 
 residues = pd.read_csv('residues.csv').set_index('one',drop=False)
 proteins = pd.read_csv('proteins.csv',index_col=0)
