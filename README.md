@@ -1,4 +1,4 @@
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.7727848.svg)](https://doi.org/10.5281/zenodo.7727848)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.13684962.svg)](https://doi.org/10.5281/zenodo.13684962)
 
 # Molecular simulations of the N-terminal domain of CPEB4
 
