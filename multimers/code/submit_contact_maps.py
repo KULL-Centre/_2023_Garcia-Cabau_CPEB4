@@ -26,7 +26,7 @@ cutoff = 2.0
 for name in ['CPEB4']:
     for temp in [293]:
         for ionic in [60]:
-            for size in range(105,220,10):
+            for size in range(130,171):
                 with open('{:s}_{:d}_{:d}.sh'.format(name,temp,ionic), 'w') as submit:
                     submit.write(submission.render(dirname=name,temp=temp,ionic=ionic,size=size))
                 subprocess.run(['qsub','{:s}_{:d}_{:d}.sh'.format(name,temp,ionic)])

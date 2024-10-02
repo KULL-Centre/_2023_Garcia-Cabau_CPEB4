@@ -29,11 +29,12 @@ HASP = lambda r,s,l,rc : np.where(r<rc, HA(r,s,l)-HA(rc,s,l), 0)
 DH = lambda r,yukawa_eps,lD : yukawa_eps*np.exp(-r/lD)/r
 DHSP = lambda r,yukawa_eps,lD,rc : np.where(r<rc, DH(r,yukawa_eps,lD)-DH(rc,yukawa_eps,lD), 0)
 
-def calc_energies(t,chain_index_1,chain_index_2,sigmas,lambdas,yukawa_eps,lD,temp,Naa):
+def calc_contacts(t,chain_index_1,chain_index_2,sigmas,lambdas,yukawa_eps,lD,temp,Naa):
     sel1 = t.top.select('chainid {:d}'.format(chain_index_1))
     sel2 = t.top.select('chainid {:d}'.format(chain_index_2))
     pairs_indices = t.top.select_pairs(sel1,sel2)
     d = md.compute_distances(t,pairs_indices).reshape(t.n_frames,Naa,Naa)
+    #ene = HASP(d,sigmas,lambdas,2.0) + DHSP(d,yukawa_eps,lD,4.0)
     return .5-.5*np.tanh((d-1.)/.3)
 
 def calc_cm_rg(t,masses):
@@ -97,8 +98,8 @@ def analyse_traj(df,proteins,name,temp,replica,chunk):
     t.xyz -= t.unitcell_lengths[0,:]/2
 
     t.make_molecules_whole(inplace=True)
-    n_chunks = 20
     t = t[1000:] # skip first 2 us
+    n_chunks = 20
     t = t[t.n_frames%n_chunks:]
     begin = int(t.n_frames/n_chunks * chunk)
     end = int(t.n_frames/n_chunks * (chunk + 1) - 1)
@@ -152,13 +153,14 @@ def analyse_traj(df,proteins,name,temp,replica,chunk):
 
     contact_map = np.zeros((t.n_frames,Naa,Naa))
 
+    #xyz = np.empty(0)
+
     for chain_1 in np.unique(middle_chain):
         print(chain_1)
         for chain_2 in np.setdiff1d(np.arange(n_chains),[chain_1]):
             ndx = ((middle_chain==chain_1)*indices[chain_2]).astype(bool)
             if np.any(ndx):
-                switch = calc_energies(t[ndx],chain_1,chain_2,sigmas,lambdas,yukawa_eps,lD,temp,Naa)
-                contact_map[ndx,:] += switch
+                contact_map[ndx,:] += calc_contacts(t[ndx],chain_1,chain_2,sigmas,lambdas,yukawa_eps,lD,temp,Naa)
     # save energy and contact maps
     np.save(f'contact_maps/{name:s}_{replica:d}_{chunk:d}_contact_map.npy',contact_map.mean(axis=0))
 
@@ -167,5 +169,7 @@ proteins = pd.read_csv('proteins.csv',index_col=0)
 proteins.fasta = proteins.fasta.apply(list)
 
 t0 = time.time()
+#if args.chunk == 0:
+#    center_slab(args.name,args.replica)
 analyse_traj(df,proteins,args.name,args.temp,args.replica,args.chunk)
 print('Timing {:.3f}'.format(time.time()-t0))
