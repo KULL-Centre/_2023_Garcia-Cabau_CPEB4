@@ -1,4 +1,4 @@
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.13684962.svg)](https://doi.org/10.5281/zenodo.13684962)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.13880099.svg)](https://doi.org/10.5281/zenodo.13880099)
 
 # Molecular simulations of the N-terminal domain of CPEB4
 
@@ -7,8 +7,8 @@ This repository contains Python code, [Jupyter](http://jupyter.org) Notebooks, a
 ### Layout
 
 - `analyses.ipynb` Jupyter Notebook to analyze all the simulation data and generate plots
-- `direct-coexistence/` Data and Python code related to multi-chain simulations of the CALVADOS model in slab geometry. Simulations are performed using [openMM](https://openmm.org/) v7.5
-- `multimers/` Data and Python code related to multi-chain simulations of multimer formation. Simulations are performed using [openMM](https://openmm.org/) v7.5 and analysed using [OVITO Basic](https://www.ovito.org/) v3.7
+- `direct-coexistence/` Data and Python code related to multi-chain simulations of the CALVADOS model in slab geometry. Simulations are performed using [OpenMM](https://openmm.org/) v.7.5
+- `multimers/` Data and Python code related to multi-chain simulations of multimer formation. Simulations are performed using [openMM](https://openmm.org/) v7.5 and analysed using [OVITO Basic](https://www.ovito.org/) v.3.7
 
 ### Usage
 
